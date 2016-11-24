@@ -1,4 +1,5 @@
-# Copyright 2011-2012 James McCauley
+
+#Copyright 2011-2012 James McCauley
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -25,8 +26,13 @@ import pox.openflow.libopenflow_01 as of
 from pox.lib.util import dpid_to_str
 from pox.lib.util import str_to_bool
 import time
+from pox.lib.packet.ethernet import ethernet, ETHER_BROADCAST
+from pox.lib.packet.ipv4 import ipv4
+from pox.lib.packet.arp import arp
+from pox.lib.addresses import IPAddr, EthAddr
+from pox.lib.util import str_to_bool, dpid_to_str
 
-log = core.getLogger()
+log = core.getLogger("LearningSwitch")
 
 # We don't want to flood immediately when a switch connects.
 # Can be overriden on commandline.
@@ -77,10 +83,12 @@ class LearningSwitch (object):
     # Switch we'll be adding L2 learning switch capabilities to
     self.connection = connection
     self.transparent = transparent
+    self.mac = self.connection.eth_addr
+    self.live_servers = {}
 
     # Our table
     self.macToPort = {}
-
+    self.memory = {}
     # We want to hear PacketIn messages, so we listen
     # to the connection
     connection.addListeners(self)
@@ -88,17 +96,111 @@ class LearningSwitch (object):
     # We just use this to know when to log a helpful message
     self.hold_down_expired = _flood_delay == 0
 
-    #log.debug("Initializing LearningSwitch, transparent=%s",
-    #          str(self.transparent))
+    self.outstanding_probes = {}
+    self.probe_cycle_time = 5
+    self.arp_timeout = 3
+    self._do_probe()
+
+  def drop1 (duration = None):
+    
+    if duration is not None:
+      if not isinstance(duration, tuple):
+        duration = (duration,duration)
+      msg = of.ofp_flow_mod()
+      msg.match = of.ofp_match.from_packet(packet)
+      msg.idle_timeout = duration[0]
+      msg.hard_timeout = duration[1]
+      msg.buffer_id = event.ofp.buffer_id
+      elf.connection.send(msg)
+    elif event.ofp.buffer_id is not None:
+      msg = of.ofp_packet_out()
+      msg.buffer_id = event.ofp.buffer_id
+      msg.in_port = event.port
+      self.connection.send(msg)
+  def _do_expire (self):
+    """
+    Expire probes and "memorized" flows
+    Each of these should only have a limited lifetime.
+    """
+    t = time.time()
+
+    # Expire probes
+    for ip,expire_at in self.outstanding_probes.items():
+     if t > expire_at:
+       self.outstanding_probes.pop(ip, None)
+       if ip in self.live_servers:
+         print("Server %s down", ip)
+         del self.live_servers[ip]
+
+    # Expire old flows
+    c = len(self.memory)
+    self.memory = {k:v for k,v in self.memory.items()
+                   if not v.is_expired}
+    if len(self.memory) != c:
+     print("Expired %i flows", c-len(self.memory))
+
+  def _do_probe (self):
+     #Send ARP to server to see if its still up
+    self._do_expire()
+    server = IPAddr('10.0.0.1')
+    r = arp()
+    r.hwtype = r.HW_TYPE_ETHERNET
+    r.prototype = r.PROTO_TYPE_IP
+    r.opcode = r.REQUEST
+    r.hwdst = ETHER_BROADCAST
+    r.protodst = server
+    r.hwsrc = self.mac
+    r.protosrc = IPAddr('10.0.0.5')
+    e = ethernet(type=ethernet.ARP_TYPE, src=self.mac,
+                 dst=ETHER_BROADCAST)
+    e.set_payload(r)
+    print("ARPing for %s", server)
+    msg = of.ofp_packet_out()
+    msg.data = e.pack()
+    msg.actions.append(of.ofp_action_output(port = of.OFPP_FLOOD))
+    msg.in_port = of.OFPP_NONE
+    self.connection.send(msg)
+
+    self.outstanding_probes[server] = time.time() + self.arp_timeout
+
+    core.callDelayed(self._probe_wait_time, self._do_probe)
+
+  @property
+  def _probe_wait_time (self):
+    r = 5 #self.probe_cycle_time
+    r = max(.25, r) # Cap it at four per second
+    return r
+  def new_flow():
+    return IPAddr('10.0.0.2') 
+
 
   def _handle_PacketIn (self, event):
     """
     Handle packet in messages from the switch to implement above algorithm.
     """
-"""My logic to keep the backup server blocked from not sending the data"""
+    """My logic to keep the backup server blocked from not sending the data"""
     packet = event.parsed
     inport = event.port
     ippkt = packet.find('ipv4')
+    def drop (duration = None):
+      """
+      Drops this packet and optionally installs a flow to continue
+      dropping similar ones for a while
+      """
+      if duration is not None:
+        if not isinstance(duration, tuple):
+          duration = (duration,duration)
+        msg = of.ofp_flow_mod()
+        msg.match = of.ofp_match.from_packet(packet)
+        msg.idle_timeout = duration[0]
+        msg.hard_timeout = duration[1]
+        msg.buffer_id = event.ofp.buffer_id
+        self.connection.send(msg)
+      elif event.ofp.buffer_id is not None:
+        msg = of.ofp_packet_out()
+        msg.buffer_id = event.ofp.buffer_id
+        msg.in_port = event.port
+        self.connection.send(msg)
     print (ippkt)
     if ippkt is not None:
      dstip = str(ippkt.dstip)
@@ -115,6 +217,25 @@ class LearningSwitch (object):
        dropped = 1
        self.connection.send(msg)
        return
+    tcpp =packet.find('tcp')
+    if not tcpp:
+     arpp = packet.find('arp')
+     if arpp:
+      if arpp.opcode ==arpp.REPLY:
+       if arpp.protosrc in self.outstanding_probes:
+         del self.outstanding_probes[arpp.protosrc]
+	 if (self.live_servers.get(arpp.protosrc, (None,None)) == (arpp.hwsrc,inport)):
+              # Ah, nothing new here.
+              pass
+         else:
+              # Ooh, new server.
+              self.live_servers[arpp.protosrc] = arpp.hwsrc,inport
+              print ("Server %s up", arpp.protosrc)
+      return
+
+      # Not TCP and not ARP.  Don't know what to do with this.  Drop it.
+     return drop(5)
+     
     def flood (message = None):
       """ Floods the packet """
       msg = of.ofp_packet_out()
@@ -139,25 +260,7 @@ class LearningSwitch (object):
       msg.in_port = event.port
       self.connection.send(msg)
 
-    def drop (duration = None):
-      """
-      Drops this packet and optionally installs a flow to continue
-      dropping similar ones for a while
-      """
-      if duration is not None:
-        if not isinstance(duration, tuple):
-          duration = (duration,duration)
-        msg = of.ofp_flow_mod()
-        msg.match = of.ofp_match.from_packet(packet)
-        msg.idle_timeout = duration[0]
-        msg.hard_timeout = duration[1]
-        msg.buffer_id = event.ofp.buffer_id
-        self.connection.send(msg)
-      elif event.ofp.buffer_id is not None:
-        msg = of.ofp_packet_out()
-        msg.buffer_id = event.ofp.buffer_id
-        msg.in_port = event.port
-        self.connection.send(msg)
+    
 
     self.macToPort[packet.src] = event.port # 1
 
@@ -216,4 +319,3 @@ def launch (transparent=False, hold_down=_flood_delay):
     raise RuntimeError("Expected hold-down to be a number")
 
   core.registerNew(l2_learning, str_to_bool(transparent))
-
