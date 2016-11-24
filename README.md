@@ -7,7 +7,7 @@ use command : sudo mn --topo single,6 --mac --controller remote
 
 #Open flow controller
 Pox
-use command : ~pox./pox.py forward.l2_learning
+use command : ~pox./pox.py controller
 We are modifying default forward.l2_learning code to suit are simulation
 
 #Setup
