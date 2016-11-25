@@ -7,11 +7,7 @@
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Modified this code to work for my silulation. Used l2_learning module.
 
 """
 An L2 learning switch.
@@ -37,7 +33,6 @@ log = core.getLogger("LearningSwitch")
 # We don't want to flood immediately when a switch connects.
 # Can be overriden on commandline.
 _flood_delay = 0
-
 class LearningSwitch (object):
   """
   The learning switch "brain" associated with a single OpenFlow switch.
@@ -85,6 +80,8 @@ class LearningSwitch (object):
     self.transparent = transparent
     self.mac = self.connection.eth_addr
     self.live_servers = {}
+    self.dropped = 1 #Set to 1 if H2 not required as backup
+
 
     # Our table
     self.macToPort = {}
@@ -101,22 +98,7 @@ class LearningSwitch (object):
     self.arp_timeout = 3
     self._do_probe()
 
-  def drop1 (duration = None):
-    
-    if duration is not None:
-      if not isinstance(duration, tuple):
-        duration = (duration,duration)
-      msg = of.ofp_flow_mod()
-      msg.match = of.ofp_match.from_packet(packet)
-      msg.idle_timeout = duration[0]
-      msg.hard_timeout = duration[1]
-      msg.buffer_id = event.ofp.buffer_id
-      elf.connection.send(msg)
-    elif event.ofp.buffer_id is not None:
-      msg = of.ofp_packet_out()
-      msg.buffer_id = event.ofp.buffer_id
-      msg.in_port = event.port
-      self.connection.send(msg)
+  
   def _do_expire (self):
     """
     Expire probes and "memorized" flows
@@ -130,6 +112,7 @@ class LearningSwitch (object):
        self.outstanding_probes.pop(ip, None)
        if ip in self.live_servers:
          print("Server %s down", ip)
+         LearningSwitch.dropped = 0
          del self.live_servers[ip]
 
     # Expire old flows
@@ -182,6 +165,7 @@ class LearningSwitch (object):
     packet = event.parsed
     inport = event.port
     ippkt = packet.find('ipv4')
+    
     def drop (duration = None):
       """
       Drops this packet and optionally installs a flow to continue
@@ -204,17 +188,15 @@ class LearningSwitch (object):
     print (ippkt)
     if ippkt is not None:
      dstip = str(ippkt.dstip)
-     print (dstip)
+     print LearningSwitch.dropped
      print ('Here')
-     dropped = 0
-     if(inport == 2 and dstip == '10.0.0.5' ):
+     if(inport == 2 and dstip == '10.0.0.5' and LearningSwitch.dropped == 0 ):
        print ('Here in if')
        msg = of.ofp_flow_mod()
        msg.match = of.ofp_match.from_packet(packet)
        #msg.buffer_id = event.ofp.buffer_id
-       msg.idle_timeout = 120
+       msg.idle_timeout = 5
        print("Till here done")
-       dropped = 1
        self.connection.send(msg)
        return
     tcpp =packet.find('tcp')
@@ -231,10 +213,11 @@ class LearningSwitch (object):
               # Ooh, new server.
               self.live_servers[arpp.protosrc] = arpp.hwsrc,inport
               print ("Server %s up", arpp.protosrc)
-      return
+              LearningSwitch.dropped = 1
+      
 
       # Not TCP and not ARP.  Don't know what to do with this.  Drop it.
-     return drop(5)
+
      
     def flood (message = None):
       """ Floods the packet """
