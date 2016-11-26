@@ -133,7 +133,7 @@ class LearningSwitch (object):
     r.hwdst = ETHER_BROADCAST
     r.protodst = server
     r.hwsrc = self.mac
-    r.protosrc = IPAddr('10.0.0.5')
+    r.protosrc = IPAddr('10.0.0.6')
     e = ethernet(type=ethernet.ARP_TYPE, src=self.mac,
                  dst=ETHER_BROADCAST)
     e.set_payload(r)
@@ -165,7 +165,52 @@ class LearningSwitch (object):
     packet = event.parsed
     inport = event.port
     ippkt = packet.find('ipv4')
-    
+
+    def flood (message = None):
+      """ Floods the packet """
+      msg = of.ofp_packet_out()
+      self.hold_down_expired = True 
+      msg.actions.append(of.ofp_action_output(port = of.OFPP_FLOOD))
+
+      msg.data = event.ofp
+      msg.in_port = event.port
+      self.connection.send(msg)
+ 
+    def mapping(event,packet):
+      self.macToPort[packet.src] = event.port # 1
+      print (self.macToPort[packet.src])
+      if not self.transparent: # 2
+        if packet.type == packet.LLDP_TYPE or packet.dst.isBridgeFiltered():
+	  print("Calling drop method")
+          drop() # 2a
+          return
+
+      if packet.dst.is_multicast:
+        flood() # 3a
+      else:
+        if packet.dst not in self.macToPort: # 4
+          flood("Port for %s unknown -- flooding" % (packet.dst,)) # 4a
+        else:
+          port = self.macToPort[packet.dst]
+          if port == event.port: # 5
+            #5a
+            log.warning("Same port for packet from %s -> %s on %s.%s.  Drop."
+              % (packet.src, packet.dst, dpid_to_str(event.dpid), port))
+            print("Calling drop for 10")
+	    drop(10)
+            return
+          # 6
+          log.debug("installing flow for %s.%i -> %s.%i" %
+                  (packet.src, event.port, packet.dst, port))
+          msg = of.ofp_flow_mod()
+          msg.match = of.ofp_match.from_packet(packet, event.port)
+          msg.idle_timeout = 10
+          msg.hard_timeout = 30
+          msg.actions.append(of.ofp_action_output(port = port))
+          msg.data = event.ofp # 6a
+          self.connection.send(msg)
+
+ 
     def drop (duration = None):
       """
       Drops this packet and optionally installs a flow to continue
@@ -190,15 +235,19 @@ class LearningSwitch (object):
      dstip = str(ippkt.dstip)
      print LearningSwitch.dropped
      print ('Here')
-     if(inport == 2 and dstip == '10.0.0.5' and LearningSwitch.dropped == 0 ):
-       print ('Here in if')
-       msg = of.ofp_flow_mod()
-       msg.match = of.ofp_match.from_packet(packet)
-       #msg.buffer_id = event.ofp.buffer_id
-       msg.idle_timeout = 5
-       print("Till here done")
-       self.connection.send(msg)
-       return
+     
+     if(inport == 2 and dstip == '10.0.0.5'):
+       if(LearningSwitch.dropped == 1):
+         print ('Here in if')
+         msg = of.ofp_flow_mod()
+         msg.match = of.ofp_match.from_packet(packet)
+         #msg.buffer_id = event.ofp.buffer_id
+         msg.hard_timeout = 1
+         print("Till here done")
+         self.connection.send(msg)
+         return
+       else:
+         mapping(event, packet)
     tcpp =packet.find('tcp')
     if not tcpp:
      arpp = packet.find('arp')
@@ -214,67 +263,10 @@ class LearningSwitch (object):
               self.live_servers[arpp.protosrc] = arpp.hwsrc,inport
               print ("Server %s up", arpp.protosrc)
               LearningSwitch.dropped = 1
-      
+    mapping(event,packet)   
 
-      # Not TCP and not ARP.  Don't know what to do with this.  Drop it.
-
-     
-    def flood (message = None):
-      """ Floods the packet """
-      msg = of.ofp_packet_out()
-      if time.time() - self.connection.connect_time >= _flood_delay:
-        # Only flood if we've been connected for a little while...
-
-        if self.hold_down_expired is False:
-          # Oh yes it is!
-          self.hold_down_expired = True
-          log.info("%s: Flood hold-down expired -- flooding",
-              dpid_to_str(event.dpid))
-
-        if message is not None: log.debug(message)
-        #log.debug("%i: flood %s -> %s", event.dpid,packet.src,packet.dst)
-        # OFPP_FLOOD is optional; on some switches you may need to change
-        # this to OFPP_ALL.
-        msg.actions.append(of.ofp_action_output(port = of.OFPP_FLOOD))
-      else:
-        pass
-        #log.info("Holding down flood for %s", dpid_to_str(event.dpid))
-      msg.data = event.ofp
-      msg.in_port = event.port
-      self.connection.send(msg)
 
     
-
-    self.macToPort[packet.src] = event.port # 1
-
-    if not self.transparent: # 2
-      if packet.type == packet.LLDP_TYPE or packet.dst.isBridgeFiltered():
-        drop() # 2a
-        return
-
-    if packet.dst.is_multicast:
-      flood() # 3a
-    else:
-      if packet.dst not in self.macToPort: # 4
-        flood("Port for %s unknown -- flooding" % (packet.dst,)) # 4a
-      else:
-        port = self.macToPort[packet.dst]
-        if port == event.port: # 5
-          # 5a
-          log.warning("Same port for packet from %s -> %s on %s.%s.  Drop."
-              % (packet.src, packet.dst, dpid_to_str(event.dpid), port))
-          drop(10)
-          return
-        # 6
-        log.debug("installing flow for %s.%i -> %s.%i" %
-                  (packet.src, event.port, packet.dst, port))
-        msg = of.ofp_flow_mod()
-        msg.match = of.ofp_match.from_packet(packet, event.port)
-        msg.idle_timeout = 10
-        msg.hard_timeout = 30
-        msg.actions.append(of.ofp_action_output(port = port))
-        msg.data = event.ofp # 6a
-        self.connection.send(msg)
 
 
 class l2_learning (object):
