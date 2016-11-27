@@ -21,7 +21,7 @@ def rec_pmu(s):
 	break;
 def send_oa(data_list):
  while True:
-	ss.connect(('10.0.0.5',12345));
+	ss.connect(('10.0.0.5',12346));
 	ss.send(str(data_list));
 s = socket.socket();
 host = socket.gethostname();

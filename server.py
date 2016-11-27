@@ -25,7 +25,7 @@ def send_oa(data_list):
 	ss.send(str(data_list));
 s = socket.socket();
 host = socket.gethostname();
-port = 12345;
+port = 12399;
 print(host);
 s.bind (('10.0.0.1',port));
 #f = open('pmu_data_recv.txt', 'wb');
