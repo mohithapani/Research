@@ -1,13 +1,7 @@
 
-#Copyright 2011-2012 James McCauley
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at:
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Modified this code to work for my silulation. Used l2_learning module.
+
+# 
+# Modified this code by James Mcauley for Pox to work for my silulation. Used l2_learning module.
 
 """
 An L2 learning switch.

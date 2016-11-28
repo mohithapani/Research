@@ -21,7 +21,6 @@ def rec_pmu(s):
 	break;
 def send_oa(data_list):
  while True:
-	ss.connect(('10.0.0.5',12346));
 	ss.send(str(data_list));
 s = socket.socket();
 host = socket.gethostname();
@@ -30,9 +29,17 @@ print(host);
 s.bind (('10.0.0.2',port));
 #f = open('pmu_data_recv.txt', 'wb');
 s.listen(5);
-ss = socket.socket();
-host1 = socket.gethostname();
+while 1:
+	ss = socket.socket(socket.AF_INET,socket.SOCK_STREAM);
+	try:
+		ss.connect(('10.0.0.5',12346));
+		rec_pmu(s)
+	except:
+		print("Sleeping briefly");
+		time.sleep(5)
+		continue
 
-rec_pmu(s);
 s.shutdown(socket.SHUT_WR);
 s.close();
+ss.shutdown(socket.SHUT_WR);
+ss.close(socket.SHUT_WR);
