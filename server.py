@@ -20,8 +20,9 @@ def rec_pmu(s):
 	client.close();
 	break;
 def send_oa(data_list):
+
  while True:
-	ss.connect(('10.0.0.5',12345));
+
 	ss.send(str(data_list));
 s = socket.socket();
 host = socket.gethostname();
@@ -33,6 +34,10 @@ s.listen(5);
 ss = socket.socket();
 host1 = socket.gethostname();
 
+ss.connect(('10.0.0.5',12345));
 rec_pmu(s);
+
 s.shutdown(socket.SHUT_WR);
 s.close();
+ss.shutdown(socket.SHUT_WR);
+ss.close();
