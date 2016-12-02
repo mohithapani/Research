@@ -1,20 +1,23 @@
 import socket
 import thread
 import time
+import json
 def rec_pmu(s):
  data_list = [];
  while True :
 	client , addr = s.accept();
 	print("Got connection from" + str(addr));
 	print "Receiving...";
-	l = client.recv(30)
+	l = client.recv(1024)
 	while (l):
 		print "Receiving...";
 		data_list.append(l)
-		l = client.recv(30);
-		if(len(data_list) == 100):
+		l = client.recv(1024);
+		if(l):
+			print l;
 			send_oa(data_list);
 			del data_list[:];
+			#send_oa(l)
 	#f.close();
 	print "Done Receiving";
 	client.close();
@@ -22,7 +25,7 @@ def rec_pmu(s):
 def send_oa(data_list):
 
  while True:
-
+	#data_list = json.dump(data_list,ensure_ascii = False)
 	ss.send(str(data_list));
 s = socket.socket();
 host = socket.gethostname();
