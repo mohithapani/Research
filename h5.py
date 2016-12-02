@@ -2,6 +2,9 @@ import socket
 import signal
 import threading
 import time
+import json
+import numpy as np
+import matplotlib.pyplot as plt
 def sigint_handle(sig,frame):
 	try:
 		pass
@@ -22,14 +25,20 @@ def Thread1():
 		client, addr = s.accept();
 		print(" Got connection from" +  str(addr));
 		#print " Receiving ";
-		l = client.recv(10)
+		l = client.recv(1024)
 		while(l):
-			#print l;
-			print "From 1";
+			l = l.replace("\\n","'\n");
+			l = l.strip('[]')
+			print l;
+			#print "From 1";
+			#data_loaded = json.load(l)
+			#print(data_loaded)
+			pass;
 		client.close();
 
 	s.shutdown(socket.shut_WR);
 	s.close();
+	print("End of thread 1")
 
 def Thread2():
 	print("Starting Thread2")
@@ -43,7 +52,7 @@ def Thread2():
 		#print " Receiving ";
 		l2 = client1.recv(10)
 		while(l2):
-			#print l;
+			print l2;
 			print "From 2";
 		client1.close();
 
@@ -67,3 +76,4 @@ except(KeyboardInterrupt,SystemExit):
 	s2.close();
 	s.shutdown(socket.shut_WR);
 	s.close();
+	print("Closed Thread from exception")
